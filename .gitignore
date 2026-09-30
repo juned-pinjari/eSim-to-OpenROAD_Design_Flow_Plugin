@@ -1,0 +1,24 @@
+# === Build artifacts (ORFS) ===
+orfs/OpenROAD-flow-scripts/
+orfs/*.log
+orfs/*.json
+orfs/__pycache__/
+
+# === Python ===
+**/__pycache__/
+*.pyc
+*.pyo
+
+# === nghdl build ===
+nghdl/
+
+# === Editor / OS ===
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# === eSim simulation outputs ===
+plot_data_v.txt
+plot_data_i.txt

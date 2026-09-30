@@ -7,11 +7,13 @@
 #    MAINTAINED: Sumanto Kar, sumantokar@iitb.ac.in
 #  ORGANIZATION: eSim Team at FOSSEE, IIT Bombay
 #       CREATED: Monday 2 March 2026
-#      REVISION: Monday 3 Aug 2026
+#      REVISION: 2026-09-30 — Rewritten to use parser-based conversion
+#                (Juned Pinjari, FOSSEE Autumn 2026 Intern)
 # =====================================================================
 
 import os
 import sys
+
 
 class NetlistToRTL:
 
@@ -19,145 +21,83 @@ class NetlistToRTL:
 
         self.cir_file = cir_file
 
-        self.module_name = os.path.basename(
-            cir_file
-        ).replace(".cir.out", "")
+        # Handle both .cir and .cir.out inputs.
+        # The frontend passes .cir but the actual netlist file is .cir.out.
+        self.cir_out_file = self._resolve_cir_out(cir_file)
 
-    # ----------------------------------------
-    # DETECT HALF ADDER
-    # ----------------------------------------
+        basename = os.path.basename(cir_file)
+        # Strip .cir.out first, then .cir (for frontend compatibility)
+        if basename.endswith(".cir.out"):
+            self.module_name = basename[:-len(".cir.out")]
+        elif basename.endswith(".cir"):
+            self.module_name = basename[:-len(".cir")]
+        else:
+            self.module_name = basename
 
-    def detect_halfadder(self, text):
+    @staticmethod
+    def _resolve_cir_out(cir_file):
+        """Find the actual netlist file.
 
-        text = text.lower()
+        The frontend may pass ``foo.cir`` but the simulation output
+        is ``foo.cir.out``.  Try both paths.
+        """
+        if os.path.exists(cir_file):
+            # If it ends with .cir, check if .cir.out exists
+            if cir_file.endswith(".cir"):
+                cir_out = cir_file + ".out"
+                if os.path.exists(cir_out):
+                    return cir_out
+            return cir_file
 
-        if "half_adder" in text:
-            return True
+        # File doesn't exist — try adding .out
+        if cir_file.endswith(".cir"):
+            cir_out = cir_file + ".out"
+            if os.path.exists(cir_out):
+                return cir_out
 
-        if "d_xor" in text and "d_and" in text:
-            return True
-
-        return False
-
-    # ----------------------------------------
-    # DETECT FULL ADDER
-    # ----------------------------------------
-
-    def detect_fulladder(self, text):
-
-        text = text.lower()
-
-        if "full_adder" in text:
-            return True
-
-        if "cin" in text:
-            return True
-
-        return False
-
-    # ----------------------------------------
-    # HALF ADDER VERILOG
-    # ----------------------------------------
-
-    def generate_halfadder(self):
-
-        return f"""module {self.module_name} (
-
-    input in1,
-    input in2,
-
-    output sum,
-    output cout
-
-);
-
-xor (sum, in1, in2);
-
-and (cout, in1, in2);
-
-endmodule
-"""
-
-    # ----------------------------------------
-    # FULL ADDER VERILOG
-    # ----------------------------------------
-
-    def generate_fulladder(self):
-
-        return f"""module {self.module_name} (
-
-    input in1,
-    input in2,
-    input cin,
-
-    output sum,
-    output cout
-
-);
-
-wire axb;
-wire ab;
-wire ac;
-wire bc;
-
-xor (axb, in1, in2);
-
-xor (sum, axb, cin);
-
-and (ab, in1, in2);
-
-and (ac, in1, cin);
-
-and (bc, in2, cin);
-
-or (cout, ab, ac, bc);
-
-endmodule
-"""
-
-    # ----------------------------------------
-    # CONVERT
-    # ----------------------------------------
+        return cir_file  # let it fail later with a clear message
 
     def convert(self):
+        """Convert the XSPICE netlist to synthesizable Verilog.
 
-        with open(self.cir_file, "r") as f:
+        Returns the path to the generated ``.v`` file.
+        """
+        # Import here to allow the module to be used standalone
+        # and to keep the old CLI interface working.
+        from .spice_parser import parse_file
+        from .circuit_graph import extract_circuit
+        from .verilog_emitter import emit_verilog
 
-            content = f.read()
-
-        # ------------------------------------
-        # FULL ADDER
-        # ------------------------------------
-
-        if self.detect_fulladder(content):
-
-            print(
-                "\nDetected Circuit : FullAdder\n"
+        if not os.path.exists(self.cir_out_file):
+            raise FileNotFoundError(
+                f"\nNetlist file not found:\n{self.cir_out_file}\n"
             )
 
-            verilog = self.generate_fulladder()
+        print(f"\nParsing: {self.cir_out_file}")
 
-        # ------------------------------------
-        # HALF ADDER
-        # ------------------------------------
+        parsed = parse_file(self.cir_out_file)
 
-        elif self.detect_halfadder(content):
+        print(f"  Models found   : {len(parsed.models)}")
+        print(f"  Instances (a)  : {len(parsed.instances)}")
+        print(f"  Subckt inst (x): {len(parsed.subckt_instances)}")
+        print(f"  V-sources      : {len(parsed.voltage_sources)}")
+        print(f"  Includes       : {parsed.includes}")
 
-            print(
-                "\nDetected Circuit : HalfAdder\n"
-            )
+        circuit = extract_circuit(parsed, self.module_name)
 
-            verilog = self.generate_halfadder()
+        print(f"\nExtracted circuit: {circuit.module_name}")
+        print(f"  Ports  : {len(circuit.ports)}")
+        print(f"  Wires  : {len(circuit.wires)}")
+        print(f"  Gates  : {len(circuit.gates)}")
 
-        else:
+        if circuit.clock_net:
+            print(f"  Clock  : {circuit.clock_net}"
+                  f" (period={circuit.clock_period})")
 
-            raise RuntimeError(
-                "\nUnsupported circuit.\n"
-            )
+        verilog = emit_verilog(circuit)
 
-        project_dir = os.path.dirname(
-            self.cir_file
-        )
+        # Write output alongside the input file
+        project_dir = os.path.dirname(self.cir_out_file)
 
         output_file = os.path.join(
             project_dir,
@@ -165,7 +105,6 @@ endmodule
         )
 
         with open(output_file, "w") as f:
-
             f.write(verilog)
 
         return output_file
@@ -188,29 +127,24 @@ def main():
 
     cir_file = sys.argv[1]
 
-    if not os.path.exists(cir_file):
+    print(
+        "\n========== NETLIST TO RTL =========="
+    )
+
+    try:
+        converter = NetlistToRTL(cir_file)
+        output_file = converter.convert()
 
         print(
-            f"\nFile not found:\n{cir_file}\n"
+            "\n========== COMPLETED =========="
+        )
+        print(
+            f"\nGenerated : {output_file}\n"
         )
 
+    except Exception as e:
+        print(f"\nERROR: {e}\n", file=sys.stderr)
         sys.exit(1)
-
-    print(
-        "\n========== NETLIST TO RTL ==========\n"
-    )
-
-    converter = NetlistToRTL(cir_file)
-
-    output_file = converter.convert()
-
-    print(
-        "\n========== COMPLETED ==========\n"
-    )
-
-    print(
-        f"Generated : {output_file}\n"
-    )
 
 
 if __name__ == "__main__":
