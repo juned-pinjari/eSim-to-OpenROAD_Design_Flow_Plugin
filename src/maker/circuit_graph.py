@@ -23,7 +23,10 @@ every net as an input port, output port, or internal wire.
 import re
 from dataclasses import dataclass, field
 
-from . import xspice_primitives as xp
+try:
+    from . import xspice_primitives as xp
+except ImportError:
+    import xspice_primitives as xp
 
 
 # ── Data Structures ────────────────────────────────────────────────
@@ -122,7 +125,10 @@ def _flatten_subckt(subckt, port_map, prefix, out_instances, out_models,
     all_subcircuits : dict
         All known subcircuit definitions (for recursive flattening).
     """
-    from .spice_parser import Instance, ModelDef
+    try:
+        from .spice_parser import Instance, ModelDef
+    except ImportError:
+        from spice_parser import Instance, ModelDef
 
     # Merge models from subcircuit with prefixed names to avoid
     # namespace collisions (e.g. subcircuit's "u2" vs top-level "u2")

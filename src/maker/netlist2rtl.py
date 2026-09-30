@@ -62,11 +62,15 @@ class NetlistToRTL:
 
         Returns the path to the generated ``.v`` file.
         """
-        # Import here to allow the module to be used standalone
-        # and to keep the old CLI interface working.
-        from .spice_parser import parse_file
-        from .circuit_graph import extract_circuit
-        from .verilog_emitter import emit_verilog
+        try:
+            from .spice_parser import parse_file
+            from .circuit_graph import extract_circuit
+            from .verilog_emitter import emit_verilog
+        except ImportError:
+            # Fallback when executed directly as a script by the eSim GUI
+            from spice_parser import parse_file
+            from circuit_graph import extract_circuit
+            from verilog_emitter import emit_verilog
 
         if not os.path.exists(self.cir_out_file):
             raise FileNotFoundError(
