@@ -5,7 +5,7 @@
 #                Reads .cir.out and .sub files, producing structured
 #                data (ParsedNetlist) for downstream processing.
 #
-#        AUTHOR: Juned Pinjari
+#        AUTHOR: Juned Pinjari, juned.m.pinjari@gmail.com
 #    MAINTAINED: Sumanto Kar, sumantokar@iitb.ac.in
 #  ORGANIZATION: eSim Team at FOSSEE, IIT Bombay
 #       CREATED: 2026-09-30

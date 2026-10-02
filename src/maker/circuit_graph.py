@@ -5,7 +5,7 @@
 #                netlist and extracts the digital core: module ports,
 #                internal wires, gate instances, and clock info.
 #
-#        AUTHOR: Juned Pinjari
+#        AUTHOR: Juned Pinjari, juned.m.pinjari@gmail.com
 #    MAINTAINED: Sumanto Kar, sumantokar@iitb.ac.in
 #  ORGANIZATION: eSim Team at FOSSEE, IIT Bombay
 #       CREATED: 2026-09-30
@@ -48,6 +48,7 @@ class GateInstance:
     model_type: str         # XSPICE model: "d_and", "d_xor", etc.
     inputs: list            # list of net names (legalized)
     outputs: list           # list of net names (legalized)
+    pin_map: dict = None    # pin_name → legalized net (sequential only)
 
 
 @dataclass
@@ -57,6 +58,7 @@ class DigitalCircuit:
     ports: list             # list of PortInfo
     wires: list             # list of legalized internal wire names
     gates: list             # list of GateInstance
+    constant_nets: dict = field(default_factory=dict)  # net → "1'b0"/"1'b1"
     clock_net: str = None   # legalized clock port name (if detected)
     clock_period: float = None  # in seconds (from pulse source)
 
@@ -244,7 +246,42 @@ def extract_circuit(parsed_netlist, module_name):
             "This appears to be an analog-only or mixed-signal circuit."
         )
 
-    # ── Step 1: Identify module ports via bridge tracing ───────────
+    # ── Step 1: Detect constant tie-off nets ─────────────────────────
+    # Voltage sources with DC 0V or 5V feeding through adc_bridges
+    # are tie-offs (SET/RESET tied low/high), not real input ports.
+    #
+    # IMPORTANT: Only auto-generated eSim internal nets (matching the
+    # pattern ``net-_u*-pad*_``) are considered tie-offs.  Human-readable
+    # net names like ``j``, ``k``, ``in1`` are real user-defined inputs
+    # even if they happen to be driven by DC sources in the testbench.
+    #
+    # Build: analog_net → constant value ("1'b0" or "1'b1")
+    _INTERNAL_NET_RE = re.compile(r'^net-_u\d+-pad\d+_$', re.IGNORECASE)
+
+    constant_analog_nets = {}
+    for vs in parsed_netlist.voltage_sources:
+        if vs.is_pulse:
+            continue  # pulse sources are clocks, not tie-offs
+        if vs.dc_value is not None and _INTERNAL_NET_RE.match(vs.net_plus):
+            if vs.dc_value == 0.0:
+                constant_analog_nets[vs.net_plus] = "1'b0"
+            else:
+                constant_analog_nets[vs.net_plus] = "1'b1"
+
+    # Trace constant analog nets through adc_bridges to find the
+    # corresponding digital-side constant nets.
+    constant_digital_nets = {}  # digital_net → "1'b0" / "1'b1"
+    for bridge in adc_bridges:
+        groups = bridge.port_groups
+        if len(groups) >= 2:
+            analog_nets = groups[0]
+            digital_nets = groups[1]
+            for analog, digital in zip(analog_nets, digital_nets):
+                if analog in constant_analog_nets:
+                    constant_digital_nets[digital] = \
+                        constant_analog_nets[analog]
+
+    # ── Step 2: Identify module ports via bridge tracing ───────────
 
     input_ports = []   # PortInfo list
     output_ports = []  # PortInfo list
@@ -261,6 +298,9 @@ def extract_circuit(parsed_netlist, module_name):
 
             for analog, digital in zip(analog_nets, digital_nets):
                 if analog.lower() == "gnd":
+                    continue
+                # Skip constant tie-off nets — they are not real ports
+                if analog in constant_analog_nets:
                     continue
                 input_ports.append(PortInfo(
                     name=legalize_name(analog),
@@ -297,10 +337,11 @@ def extract_circuit(parsed_netlist, module_name):
     for p in output_ports:
         net_to_port[p.spice_digital_net] = p.name
 
-    # ── Step 2: Build gate instances ──────────────────────────────
+    # ── Step 3: Build gate instances ──────────────────────────────
 
     all_nets = set()
     gate_instances = []
+    has_sequential = False
 
     for inst, model in digital_gates:
         mtype = model.model_type
@@ -309,6 +350,7 @@ def extract_circuit(parsed_netlist, module_name):
             continue
 
         gate_type = prim["verilog"]
+        pin_map = None
 
         # Resolve inputs and outputs from port_groups
         if xp.is_combinational(mtype):
@@ -316,22 +358,33 @@ def extract_circuit(parsed_netlist, module_name):
                 inst, prim
             )
         else:
+            has_sequential = True
             gate_inputs, gate_outputs = _resolve_sequential_ports(
                 inst, prim
             )
+            # Build pin_map for the emitter (pin_name → net)
+            pin_map = _build_sequential_pin_map(inst, prim)
 
-        # Map net names: if a net crosses a bridge, use the port name
+        # Map net names: if a net crosses a bridge, use the port name;
+        # if it's a constant tie-off, use the constant literal.
+        def _map_net(net):
+            if net in constant_digital_nets:
+                return constant_digital_nets[net]
+            return net_to_port.get(net, legalize_name(net))
+
         mapped_inputs = []
         for net in gate_inputs:
-            mapped = net_to_port.get(net, legalize_name(net))
-            mapped_inputs.append(mapped)
+            mapped_inputs.append(_map_net(net))
             all_nets.add(net)
 
         mapped_outputs = []
         for net in gate_outputs:
-            mapped = net_to_port.get(net, legalize_name(net))
-            mapped_outputs.append(mapped)
+            mapped_outputs.append(_map_net(net))
             all_nets.add(net)
+
+        # Remap pin_map values too
+        if pin_map:
+            pin_map = {k: _map_net(v) for k, v in pin_map.items()}
 
         gate_instances.append(GateInstance(
             inst_name=inst.model_name,
@@ -339,51 +392,59 @@ def extract_circuit(parsed_netlist, module_name):
             model_type=mtype,
             inputs=mapped_inputs,
             outputs=mapped_outputs,
+            pin_map=pin_map,
         ))
 
-    # ── Step 3: Classify internal wires ───────────────────────────
+    # ── Step 4: Classify internal wires ───────────────────────────
 
     port_names = set()
     for p in input_ports + output_ports:
         port_names.add(p.name)
 
+    # Constant literals are not wires
+    constant_literals = set(constant_digital_nets.values())
+
     internal_wires = set()
     for net in all_nets:
-        legalized = net_to_port.get(net, legalize_name(net))
-        if legalized not in port_names:
+        legalized = _map_net(net) if net in constant_digital_nets \
+            else net_to_port.get(net, legalize_name(net))
+        if legalized not in port_names and legalized not in constant_literals:
             internal_wires.add(legalized)
 
-    # ── Step 4: Clock detection (from pulse sources) ──────────────
+    # ── Step 5: Clock detection (from pulse sources) ──────────────
+    # Only detect clock if the circuit has sequential elements.
 
     clock_net = None
     clock_period = None
-    for vs in parsed_netlist.voltage_sources:
-        if vs.is_pulse:
-            # Trace this voltage source's net through adc_bridge
-            for bridge in adc_bridges:
-                groups = bridge.port_groups
-                if len(groups) >= 2:
-                    analog_nets = groups[0]
-                    digital_nets = groups[1]
-                    if vs.net_plus in analog_nets:
-                        idx = analog_nets.index(vs.net_plus)
-                        if idx < len(digital_nets):
-                            clock_net = legalize_name(vs.net_plus)
-                            # pulse params: v1 v2 td tr tf pw period
-                            if len(vs.pulse_params) >= 7:
-                                try:
-                                    clock_period = float(
-                                        vs.pulse_params[6]
-                                    )
-                                except ValueError:
-                                    pass
-                            break
+    if has_sequential:
+        for vs in parsed_netlist.voltage_sources:
+            if vs.is_pulse:
+                # Trace this voltage source's net through adc_bridge
+                for bridge in adc_bridges:
+                    groups = bridge.port_groups
+                    if len(groups) >= 2:
+                        analog_nets = groups[0]
+                        digital_nets = groups[1]
+                        if vs.net_plus in analog_nets:
+                            idx = analog_nets.index(vs.net_plus)
+                            if idx < len(digital_nets):
+                                clock_net = legalize_name(vs.net_plus)
+                                # pulse params: v1 v2 td tr tf pw period
+                                if len(vs.pulse_params) >= 7:
+                                    try:
+                                        clock_period = float(
+                                            vs.pulse_params[6]
+                                        )
+                                    except ValueError:
+                                        pass
+                                break
 
     return DigitalCircuit(
         module_name=module_name,
         ports=input_ports + output_ports,
         wires=sorted(internal_wires),
         gates=gate_instances,
+        constant_nets=constant_digital_nets,
         clock_net=clock_net,
         clock_period=clock_period,
     )
@@ -465,3 +526,24 @@ def _resolve_sequential_ports(inst, prim):
             inputs.append(net)
 
     return inputs, outputs
+
+
+def _build_sequential_pin_map(inst, prim):
+    """Build a pin_name → raw_net mapping for a sequential element.
+
+    This is used by the emitter to know which net corresponds to
+    ``clk``, ``set``, ``reset``, ``j``, ``k``, ``q``, ``qbar``, etc.
+    Net names returned here are the raw SPICE names (before legalization);
+    the caller is responsible for mapping/legalizing them.
+    """
+    pins = prim["pins"]
+    flat = []
+    for g in inst.port_groups:
+        flat.extend(g)
+
+    pin_map = {}
+    for i, pin_name in enumerate(pins):
+        if i < len(flat):
+            pin_map[pin_name] = flat[i]
+
+    return pin_map

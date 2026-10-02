@@ -5,7 +5,7 @@
 #                Maps ngspice code model types to their port ordering
 #                and corresponding Verilog primitives.
 #
-#        AUTHOR: Juned Pinjari
+#        AUTHOR: Juned Pinjari, juned.m.pinjari@gmail.com
 #    MAINTAINED: Sumanto Kar, sumantokar@iitb.ac.in
 #  ORGANIZATION: eSim Team at FOSSEE, IIT Bombay
 #       CREATED: 2026-09-30

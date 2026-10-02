@@ -28,11 +28,19 @@ class NetlistToRTL:
         basename = os.path.basename(cir_file)
         # Strip .cir.out first, then .cir (for frontend compatibility)
         if basename.endswith(".cir.out"):
-            self.module_name = basename[:-len(".cir.out")]
+            project_name = basename[:-len(".cir.out")]
         elif basename.endswith(".cir"):
-            self.module_name = basename[:-len(".cir")]
+            project_name = basename[:-len(".cir")]
         else:
-            self.module_name = basename
+            project_name = basename
+
+        # project_name is used for the output filename (must match eSim GUI)
+        self.project_name = project_name
+
+        # module_name is the Verilog identifier (legalized)
+        self.module_name = project_name
+        if self.module_name and self.module_name[0].isdigit():
+            self.module_name = "n_" + self.module_name
 
     @staticmethod
     def _resolve_cir_out(cir_file):
@@ -105,7 +113,7 @@ class NetlistToRTL:
 
         output_file = os.path.join(
             project_dir,
-            self.module_name + ".v"
+            self.project_name + ".v"
         )
 
         with open(output_file, "w") as f:
