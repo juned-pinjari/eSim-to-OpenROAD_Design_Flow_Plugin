@@ -286,7 +286,8 @@ def parse_lines(lines):
         if line.lower().startswith(".subckt"):
             tokens = line.split()
             subckt_name = tokens[1]
-            subckt_ports = tokens[2:]
+            # Filter out '?' (eSim placeholder for unconnected ports)
+            subckt_ports = [t for t in tokens[2:] if t != '?']
             in_subckt = True
             i += 1
             continue
@@ -323,9 +324,11 @@ def parse_lines(lines):
         # x-line (subcircuit instance)
         if line[0].lower() == "x" and len(line) > 1 and line[1:2].isdigit():
             tokens = line.split()
+            # Filter out '?' (eSim placeholder for unconnected ports)
+            nets = [t for t in tokens[1:-1] if t != '?']
             si = SubcktInstance(
                 name=tokens[0],
-                nets=tokens[1:-1],
+                nets=nets,
                 subckt_name=tokens[-1],
             )
             subckt_instances.append(si)
