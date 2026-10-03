@@ -37,10 +37,14 @@ class NetlistToRTL:
         # project_name is used for the output filename (must match eSim GUI)
         self.project_name = project_name
 
-        # module_name is the Verilog identifier (legalized)
+        # module_name is the Verilog identifier (legalized).
+        # OpenROAD's formal verification backend (KeplerFormal/naja)
+        # fails to parse Verilog escaped identifiers that start with a digit.
+        # To maintain compatibility, we prefix numeric module names with 'n_'.
         self.module_name = project_name
         if self.module_name and self.module_name[0].isdigit():
             self.module_name = "n_" + self.module_name
+        self.needs_escape = False
 
     @staticmethod
     def _resolve_cir_out(cir_file):
@@ -97,7 +101,11 @@ class NetlistToRTL:
         print(f"  V-sources      : {len(parsed.voltage_sources)}")
         print(f"  Includes       : {parsed.includes}")
 
-        circuit = extract_circuit(parsed, self.module_name)
+        circuit = extract_circuit(
+            parsed,
+            self.module_name,
+            needs_escape=self.needs_escape
+        )
 
         print(f"\nExtracted circuit: {circuit.module_name}")
         print(f"  Ports  : {len(circuit.ports)}")

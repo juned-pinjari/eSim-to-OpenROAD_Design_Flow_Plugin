@@ -61,6 +61,7 @@ class DigitalCircuit:
     constant_nets: dict = field(default_factory=dict)  # net → "1'b0"/"1'b1"
     clock_net: str = None   # legalized clock port name (if detected)
     clock_period: float = None  # in seconds (from pulse source)
+    needs_escape: bool = False  # whether the module name requires a Verilog escape sequence
 
 
 # ── Identifier Legalization ────────────────────────────────────────
@@ -177,7 +178,7 @@ def _flatten_subckt(subckt, port_map, prefix, out_instances, out_models,
 
 # ── Core Extraction ───────────────────────────────────────────────
 
-def extract_circuit(parsed_netlist, module_name):
+def extract_circuit(parsed_netlist, module_name, needs_escape=False):
     """Extract the digital core from a *flat* (non-hierarchical) netlist.
 
     Parameters
@@ -447,6 +448,7 @@ def extract_circuit(parsed_netlist, module_name):
         constant_nets=constant_digital_nets,
         clock_net=clock_net,
         clock_period=clock_period,
+        needs_escape=needs_escape,
     )
 
 

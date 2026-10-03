@@ -180,7 +180,7 @@ class OpenROADWorker(QtCore.QObject):
 
             cmd = [
                 "make",
-                f"DESIGN_CONFIG=./designs/{platform}/{design_name}/config.mk",
+                f"DESIGN_CONFIG=./designs/{platform}/{flow.top_module}/config.mk",
             ]
             self._process = subprocess.Popen(
                 cmd,

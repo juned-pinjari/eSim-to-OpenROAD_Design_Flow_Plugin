@@ -45,7 +45,10 @@ def emit_verilog(circuit):
                 seq_regs.add(q)
 
     # ── Module header ─────────────────────────────────────────────
-    lines.append(f"module {circuit.module_name} (")
+    if getattr(circuit, "needs_escape", False):
+        lines.append(f"module \\{circuit.module_name} (")
+    else:
+        lines.append(f"module {circuit.module_name} (")
 
     port_decls = []
     for port in circuit.ports:
