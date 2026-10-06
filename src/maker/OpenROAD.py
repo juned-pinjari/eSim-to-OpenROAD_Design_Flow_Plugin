@@ -164,26 +164,26 @@ class OpenROADFlow:
             f"\nCopied Verilog:\n{destination}\n"
         )
 
-    def generate_sdc(self):
+    def copy_sdc(self):
 
-        sdc_file = os.path.join(
+        source_sdc = os.path.splitext(self.verilog_file)[0] + ".sdc"
+        destination = os.path.join(
             self.design_dir,
             "constraint.sdc"
         )
 
-        sdc = """
-create_clock [get_ports clk] -name clk -period 10
-set_input_delay 0.1 [all_inputs]
-set_output_delay 0.1 [all_outputs]
-"""
-
-        with open(sdc_file, "w") as f:
-
-            f.write(sdc.strip() + "\n")
-
-        print(
-            f"Generated SDC:\n{sdc_file}\n"
-        )
+        if os.path.exists(source_sdc):
+            shutil.copy(
+                source_sdc,
+                destination
+            )
+            print(
+                f"\nCopied SDC:\n{destination}\n"
+            )
+        else:
+            print(
+                f"\nWarning: Expected SDC file not found:\n{source_sdc}\n"
+            )
 
     def generate_config(self):
 
@@ -333,8 +333,8 @@ export PLACE_DENSITY = 0.40
         print("[3] Copying Verilog")
         self.copy_verilog()
 
-        print("[4] Generating SDC")
-        self.generate_sdc()
+        print("[4] Copying SDC")
+        self.copy_sdc()
 
         print("[5] Generating config.mk")
         self.generate_config()
