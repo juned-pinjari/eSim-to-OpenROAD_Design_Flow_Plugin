@@ -62,20 +62,15 @@ class OpenROADFlow:
         self.verilog_file = os.path.abspath(verilog_file)
         self.platform = platform
 
+        # Module name used by ORFS (may differ from design_name for
+        # identifiers starting with a digit — see netlist2rtl.py).
+        self.top_module = (
+            "n_" + design_name
+            if design_name and design_name[0].isdigit()
+            else design_name
+        )
+
         self.orfs_root = OpenROADFlow.orfs_root_path()
-
-        self.design_name = design_name
-        self.top_module = "n_" + design_name if design_name and design_name[0].isdigit() else design_name
-
-        self.verilog_file = os.path.abspath(
-            verilog_file
-        )
-
-        self.platform = platform
-
-        self.orfs_root = os.path.expanduser(
-            "~/eSim-to-OpenROAD_Design_Flow_Plugin/orfs/OpenROAD-flow-scripts"
-        )
 
         self.flow_dir = os.path.join(
             self.orfs_root,
@@ -164,8 +159,13 @@ class OpenROADFlow:
             f"\nCopied Verilog:\n{destination}\n"
         )
 
-    def copy_sdc(self):
+    def generate_sdc(self):
+        """Generate or copy SDC constraints.
 
+        If a converter-emitted SDC file exists alongside the Verilog file,
+        it is copied to the design directory. Otherwise, a default fallback
+        timing constraint is created.
+        """
         source_sdc = os.path.splitext(self.verilog_file)[0] + ".sdc"
         destination = os.path.join(
             self.design_dir,
@@ -181,9 +181,19 @@ class OpenROADFlow:
                 f"\nCopied SDC:\n{destination}\n"
             )
         else:
+            sdc = """create_clock [get_ports clk] -name clk -period 10
+set_input_delay 0.1 [all_inputs]
+set_output_delay 0.1 [all_outputs]
+"""
+            with open(destination, "w", encoding="utf-8") as f:
+                f.write(sdc.strip() + "\n")
+
             print(
-                f"\nWarning: Expected SDC file not found:\n{source_sdc}\n"
+                f"\nGenerated fallback SDC:\n{destination}\n"
             )
+
+    def copy_sdc(self):
+        self.generate_sdc()
 
     def generate_config(self):
 
@@ -206,7 +216,7 @@ export CORE_AREA = 20 20 180 180
 export PLACE_DENSITY = 0.40
 """
 
-        with open(config_file, "w") as f:
+        with open(config_file, "w", encoding="utf-8") as f:
 
             f.write(config.strip() + "\n")
 

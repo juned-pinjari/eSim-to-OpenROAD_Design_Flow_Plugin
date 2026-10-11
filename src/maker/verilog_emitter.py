@@ -152,15 +152,8 @@ def _emit_sequential(gate):
 
 
 def _emit_async_header(clk, set_pin, reset_pin):
-    """Build the sensitivity list and async set/reset preamble.
-
-    Returns (sensitivity_str, async_lines) where async_lines is a list
-    of strings for the if/else-if blocks handling async set and reset.
-    Constant tie-offs (1'b0) are omitted from the sensitivity list.
-    """
+    """Build the sensitivity list for flip-flops."""
     sens = [f"posedge {clk}"]
-    async_lines = []
-
     has_set = not _is_constant(set_pin)
     has_reset = not _is_constant(reset_pin)
 
@@ -169,18 +162,7 @@ def _emit_async_header(clk, set_pin, reset_pin):
     if has_reset:
         sens.append(f"posedge {reset_pin}")
 
-    sensitivity = " or ".join(sens)
-
-    # Async priority: set > reset (ngspice convention)
-    if has_set and has_reset:
-        async_lines.append(f"    if ({set_pin})")
-        async_lines.append(f"    else if ({reset_pin})")
-    elif has_set:
-        async_lines.append(f"    if ({set_pin})")
-    elif has_reset:
-        async_lines.append(f"    if ({reset_pin})")
-
-    return sensitivity, async_lines
+    return " or ".join(sens)
 
 
 def _emit_jkff(gate):
@@ -194,17 +176,27 @@ def _emit_jkff(gate):
     q     = pm.get("q", "q")
     qbar  = pm.get("qbar")
 
-    sensitivity, async_lines = _emit_async_header(clk, set_, reset)
+    sensitivity = _emit_async_header(clk, set_, reset)
 
     lines = [f"// JK flip-flop instance {gate.inst_name}"]
     lines.append(f"always @({sensitivity}) begin")
 
-    if async_lines:
-        lines.append(async_lines[0])
+    has_set = not _is_constant(set_)
+    has_reset = not _is_constant(reset)
+
+    if has_set and has_reset:
+        lines.append(f"    if ({set_})")
         lines.append(f"        {q} <= 1'b1;")
-        if len(async_lines) > 1:
-            lines.append(async_lines[1])
-            lines.append(f"        {q} <= 1'b0;")
+        lines.append(f"    else if ({reset})")
+        lines.append(f"        {q} <= 1'b0;")
+        lines.append(f"    else begin")
+    elif has_set:
+        lines.append(f"    if ({set_})")
+        lines.append(f"        {q} <= 1'b1;")
+        lines.append(f"    else begin")
+    elif has_reset:
+        lines.append(f"    if ({reset})")
+        lines.append(f"        {q} <= 1'b0;")
         lines.append(f"    else begin")
     else:
         lines.append(f"    begin")
@@ -235,17 +227,27 @@ def _emit_dff(gate):
     q     = pm.get("q", "q")
     qbar  = pm.get("qbar")
 
-    sensitivity, async_lines = _emit_async_header(clk, set_, reset)
+    sensitivity = _emit_async_header(clk, set_, reset)
 
     lines = [f"// D flip-flop instance {gate.inst_name}"]
     lines.append(f"always @({sensitivity}) begin")
 
-    if async_lines:
-        lines.append(async_lines[0])
+    has_set = not _is_constant(set_)
+    has_reset = not _is_constant(reset)
+
+    if has_set and has_reset:
+        lines.append(f"    if ({set_})")
         lines.append(f"        {q} <= 1'b1;")
-        if len(async_lines) > 1:
-            lines.append(async_lines[1])
-            lines.append(f"        {q} <= 1'b0;")
+        lines.append(f"    else if ({reset})")
+        lines.append(f"        {q} <= 1'b0;")
+        lines.append(f"    else")
+    elif has_set:
+        lines.append(f"    if ({set_})")
+        lines.append(f"        {q} <= 1'b1;")
+        lines.append(f"    else")
+    elif has_reset:
+        lines.append(f"    if ({reset})")
+        lines.append(f"        {q} <= 1'b0;")
         lines.append(f"    else")
     else:
         lines.append(f"    ")
@@ -269,17 +271,27 @@ def _emit_tff(gate):
     q     = pm.get("q", "q")
     qbar  = pm.get("qbar")
 
-    sensitivity, async_lines = _emit_async_header(clk, set_, reset)
+    sensitivity = _emit_async_header(clk, set_, reset)
 
     lines = [f"// T flip-flop instance {gate.inst_name}"]
     lines.append(f"always @({sensitivity}) begin")
 
-    if async_lines:
-        lines.append(async_lines[0])
+    has_set = not _is_constant(set_)
+    has_reset = not _is_constant(reset)
+
+    if has_set and has_reset:
+        lines.append(f"    if ({set_})")
         lines.append(f"        {q} <= 1'b1;")
-        if len(async_lines) > 1:
-            lines.append(async_lines[1])
-            lines.append(f"        {q} <= 1'b0;")
+        lines.append(f"    else if ({reset})")
+        lines.append(f"        {q} <= 1'b0;")
+        lines.append(f"    else if ({t})")
+    elif has_set:
+        lines.append(f"    if ({set_})")
+        lines.append(f"        {q} <= 1'b1;")
+        lines.append(f"    else if ({t})")
+    elif has_reset:
+        lines.append(f"    if ({reset})")
+        lines.append(f"        {q} <= 1'b0;")
         lines.append(f"    else if ({t})")
     else:
         lines.append(f"    if ({t})")
@@ -304,17 +316,27 @@ def _emit_srff(gate):
     q     = pm.get("q", "q")
     qbar  = pm.get("qbar")
 
-    sensitivity, async_lines = _emit_async_header(clk, set_, reset)
+    sensitivity = _emit_async_header(clk, set_, reset)
 
     lines = [f"// SR flip-flop instance {gate.inst_name}"]
     lines.append(f"always @({sensitivity}) begin")
 
-    if async_lines:
-        lines.append(async_lines[0])
+    has_set = not _is_constant(set_)
+    has_reset = not _is_constant(reset)
+
+    if has_set and has_reset:
+        lines.append(f"    if ({set_})")
         lines.append(f"        {q} <= 1'b1;")
-        if len(async_lines) > 1:
-            lines.append(async_lines[1])
-            lines.append(f"        {q} <= 1'b0;")
+        lines.append(f"    else if ({reset})")
+        lines.append(f"        {q} <= 1'b0;")
+        lines.append(f"    else begin")
+    elif has_set:
+        lines.append(f"    if ({set_})")
+        lines.append(f"        {q} <= 1'b1;")
+        lines.append(f"    else begin")
+    elif has_reset:
+        lines.append(f"    if ({reset})")
+        lines.append(f"        {q} <= 1'b0;")
         lines.append(f"    else begin")
     else:
         lines.append(f"    begin")

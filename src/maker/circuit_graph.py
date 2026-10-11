@@ -93,19 +93,23 @@ def legalize_name(spice_name):
 
 # ── Subcircuit Flattening ──────────────────────────────────────────
 
-def _remap_net(net, port_map):
-    """Substitute a net name using a port map.
+def _remap_net(net, port_map, prefix):
+    """Substitute a net name using a port map, or prefix it if internal.
 
     If *net* is a formal port of a subcircuit, replace it with the
-    actual net from the parent.  Otherwise return it unchanged.
+    actual net from the parent.  Otherwise, prefix it to avoid aliasing.
     """
-    return port_map.get(net, net)
+    if net in port_map:
+        return port_map[net]
+    if net.lower() in ("gnd", "0", "vcc"):
+        return net
+    return f"{prefix}_{net}"
 
 
-def _remap_port_groups(groups, port_map):
-    """Apply port mapping to every net in a list of port groups."""
+def _remap_port_groups(groups, port_map, prefix):
+    """Apply port mapping or prefixing to every net in port groups."""
     return [
-        [_remap_net(n, port_map) for n in group]
+        [_remap_net(n, port_map, prefix) for n in group]
         for group in groups
     ]
 
@@ -147,7 +151,7 @@ def _flatten_subckt(subckt, port_map, prefix, out_instances, out_models,
 
     # Inline a-instances with net substitution and model name remapping
     for inst in subckt.instances:
-        remapped_groups = _remap_port_groups(inst.port_groups, port_map)
+        remapped_groups = _remap_port_groups(inst.port_groups, port_map, prefix)
         remapped_model = model_name_map.get(inst.model_name, inst.model_name)
         new_inst = Instance(
             name=f"{prefix}_{inst.name}",
@@ -167,7 +171,7 @@ def _flatten_subckt(subckt, port_map, prefix, out_instances, out_models,
         for formal, net in zip(nested_subckt.ports, nested_si.nets):
             # The net from the nested x-line may itself be a formal
             # port of the current subcircuit — resolve through port_map
-            nested_port_map[formal] = _remap_net(net, port_map)
+            nested_port_map[formal] = _remap_net(net, port_map, prefix)
 
         _flatten_subckt(
             nested_subckt, nested_port_map,

@@ -410,7 +410,7 @@ def parse_file(filepath):
     filepath = os.path.abspath(filepath)
     base_dir = os.path.dirname(filepath)
 
-    with open(filepath, "r") as f:
+    with open(filepath, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
     (instances, models, voltage_sources, subckt_instances,

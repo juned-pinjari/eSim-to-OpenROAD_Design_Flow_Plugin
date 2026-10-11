@@ -132,10 +132,10 @@ class NetlistToRTL:
             self.project_name + ".sdc"
         )
 
-        with open(output_file, "w") as f:
+        with open(output_file, "w", encoding="utf-8") as f:
             f.write(verilog)
 
-        with open(sdc_file, "w") as f:
+        with open(sdc_file, "w", encoding="utf-8") as f:
             f.write(sdc)
 
         return output_file
