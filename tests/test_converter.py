@@ -4,7 +4,7 @@
 #
 #   DESCRIPTION: Automated regression suite for the Netlist-to-RTL
 #                converter.  Runs each digital example through:
-#                  parse → emit .v + .sdc → iverilog check → yosys synth
+#                  parse -> emit .v + .sdc -> iverilog check -> yosys synth
 #
 #        AUTHOR: Juned Pinjari, juned.m.pinjari@gmail.com
 #  ORGANIZATION: eSim Team at FOSSEE, IIT Bombay
@@ -18,10 +18,11 @@ Usage:
 """
 
 import os
+import shutil
 import sys
 import subprocess
 
-# ── Configuration ─────────────────────────────────────────────────
+# -- Configuration ---------------------------------------------
 
 REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")
@@ -63,7 +64,7 @@ EXPECTED_FAILURES = {
 }
 
 
-# ── Helpers ───────────────────────────────────────────────────────
+# -- Helpers ---------------------------------------------------
 
 def _run_cmd(cmd, cwd=REPO_ROOT, timeout=30):
     """Run a shell command, return (returncode, stdout, stderr)."""
@@ -111,12 +112,19 @@ def _check_yosys(verilog_path, module_name):
     return True, "", cells
 
 
-# ── Main ──────────────────────────────────────────────────────────
+# -- Main -----------------------------------------------------
 
 def main():
     print("\n" + "=" * 70)
-    print("  NETLIST-TO-RTL CONVERTER — REGRESSION TEST SUITE")
+    print("  NETLIST-TO-RTL CONVERTER -- REGRESSION TEST SUITE")
     print("=" * 70 + "\n")
+
+    has_iverilog = shutil.which("iverilog") is not None
+    has_yosys = shutil.which("yosys") is not None
+    if not has_iverilog:
+        print("  NOTE: iverilog not found in PATH, skipping syntax checks.\n")
+    if not has_yosys:
+        print("  NOTE: yosys not found in PATH, skipping synthesis checks.\n")
 
     results = []
     pass_count = 0
@@ -161,28 +169,31 @@ def main():
         sdc_file = output_file.replace(".v", ".sdc")
         sdc_ok = os.path.exists(sdc_file)
 
-        # Step 2: iverilog check
-        iv_ok, iv_err = _check_iverilog(output_file)
-        if not iv_ok:
-            print(f"FAIL (iverilog: {iv_err[:80]})")
-            results.append((name, "FAIL", f"iverilog: {iv_err}", "", ""))
-            fail_count += 1
-            continue
+        # Step 2: iverilog check (skip if not installed)
+        if has_iverilog:
+            iv_ok, iv_err = _check_iverilog(output_file)
+            if not iv_ok:
+                print(f"FAIL (iverilog: {iv_err[:80]})")
+                results.append((name, "FAIL", f"iverilog: {iv_err}", "", ""))
+                fail_count += 1
+                continue
 
-        # Step 3: yosys synthesis
-        ys_ok, ys_err, cells = _check_yosys(output_file, module_name)
-        if not ys_ok:
-            print(f"FAIL (yosys: {ys_err[:80]})")
-            results.append((name, "FAIL", f"yosys: {ys_err}", "", ""))
-            fail_count += 1
-            continue
+        # Step 3: yosys synthesis (skip if not installed)
+        cells = 0
+        if has_yosys:
+            ys_ok, ys_err, cells = _check_yosys(output_file, module_name)
+            if not ys_ok:
+                print(f"FAIL (yosys: {ys_err[:80]})")
+                results.append((name, "FAIL", f"yosys: {ys_err}", "", ""))
+                fail_count += 1
+                continue
 
-        sdc_status = "✅" if sdc_ok else "❌"
+        sdc_status = "ok" if sdc_ok else "NO"
         print(f"PASS (cells={cells}, sdc={sdc_status})")
         results.append((name, "PASS", "", str(cells), sdc_status))
         pass_count += 1
 
-    # ── Summary Table ─────────────────────────────────────────────
+    # -- Summary Table ---------------------------------------------
     print("\n" + "=" * 70)
     print("  RESULTS SUMMARY")
     print("=" * 70)
@@ -190,8 +201,8 @@ def main():
     print(f"  {'-'*30} {'-'*8} {'-'*8} {'-'*5} {'-'*30}")
 
     for name, status, notes, cells, sdc in results:
-        status_icon = "✅" if status == "PASS" else \
-                      "⚠️ " if status in ("SKIP", "XFAIL") else "❌"
+        status_icon = "PASS" if status == "PASS" else \
+                      "WARN" if status in ("SKIP", "XFAIL") else "FAIL"
         short_notes = notes[:40] if notes else ""
         print(f"  {name:<30} {status_icon:<8} {cells:<8} {sdc:<5} "
               f"{short_notes}")
