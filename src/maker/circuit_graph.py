@@ -299,59 +299,74 @@ def extract_circuit(parsed_netlist, module_name, needs_escape=False):
                     constant_digital_nets[digital] = \
                         constant_analog_nets[analog]
 
-    # ── Step 2: Identify module ports via bridge tracing ───────────
+    # ── Step 2: Identify module ports ───────────────────────────────
+    # For full simulation netlists with an analog testbench, identify module
+    # I/O ports via the top-level ADC and DAC bridges found directly in
+    # parsed_netlist.instances.
+    top_level_bridges = [
+        inst for inst in parsed_netlist.instances
+        if models.get(inst.model_name) and xp.is_bridge(models[inst.model_name].model_type)
+    ]
 
     input_ports = []   # PortInfo list
     output_ports = []  # PortInfo list
     input_digital_nets = set()
     output_digital_nets = set()
 
-    # ADC bridge: analog inputs → digital outputs
-    # a-line format: a<N> [analog_in1 analog_in2 ...] [dig_out1 dig_out2 ...] model
-    for bridge in adc_bridges:
-        groups = bridge.port_groups
-        if len(groups) >= 2:
-            analog_nets = groups[0]   # first bracket group
-            digital_nets = groups[1]  # second bracket group
+    if top_level_bridges:
+        seen_in_names = set()
+        seen_out_names = set()
 
-            for analog, digital in zip(analog_nets, digital_nets):
-                if analog.lower() == "gnd":
-                    continue
-                # Skip constant tie-off nets — they are not real ports
-                if analog in constant_analog_nets:
-                    continue
-                input_ports.append(PortInfo(
-                    name=legalize_name(analog),
-                    direction="input",
-                    spice_analog_net=analog,
-                    spice_digital_net=digital,
-                ))
-                input_digital_nets.add(digital)
+        # DAC bridges first to identify true output ports
+        for bridge in top_level_bridges:
+            if models[bridge.model_name].model_type == "dac_bridge":
+                groups = bridge.port_groups
+                if len(groups) >= 2:
+                    digital_nets = groups[0]
+                    analog_nets = groups[1]
+                    for digital, analog in zip(digital_nets, analog_nets):
+                        if analog.lower() == "gnd":
+                            continue
+                        legal = legalize_name(analog)
+                        if legal in seen_out_names:
+                            continue
+                        seen_out_names.add(legal)
+                        output_ports.append(PortInfo(
+                            name=legal,
+                            direction="output",
+                            spice_analog_net=analog,
+                            spice_digital_net=digital,
+                        ))
+                        output_digital_nets.add(digital)
 
-    # DAC bridge: digital inputs → analog outputs
-    # a-line format: a<N> [dig_in1 dig_in2 ...] [analog_out1 analog_out2 ...] model
-    for bridge in dac_bridges:
-        groups = bridge.port_groups
-        if len(groups) >= 2:
-            digital_nets = groups[0]  # first bracket group
-            analog_nets = groups[1]   # second bracket group
+        # ADC bridges for input ports
+        for bridge in top_level_bridges:
+            if models[bridge.model_name].model_type == "adc_bridge":
+                groups = bridge.port_groups
+                if len(groups) >= 2:
+                    analog_nets = groups[0]
+                    digital_nets = groups[1]
+                    for analog, digital in zip(analog_nets, digital_nets):
+                        if analog.lower() == "gnd":
+                            continue
+                        if analog in constant_analog_nets:
+                            continue
+                        legal = legalize_name(analog)
+                        if legal in seen_in_names or legal in seen_out_names:
+                            continue
+                        seen_in_names.add(legal)
+                        input_ports.append(PortInfo(
+                            name=legal,
+                            direction="input",
+                            spice_analog_net=analog,
+                            spice_digital_net=digital,
+                        ))
+                        input_digital_nets.add(digital)
 
-            for digital, analog in zip(digital_nets, analog_nets):
-                if analog.lower() == "gnd":
-                    continue
-                output_ports.append(PortInfo(
-                    name=legalize_name(analog),
-                    direction="output",
-                    spice_analog_net=analog,
-                    spice_digital_net=digital,
-                ))
-                output_digital_nets.add(digital)
-
-    # ── Step 2b: Fallback port identification for standalone subcircuits ──
-    # When no ADC/DAC simulation bridges exist (e.g., direct subcircuit-to-RTL
-    # conversion or subcircuit testbench without analog wrappers), extract ports
-    # directly by analyzing which external nets are driven by gate outputs.
-    if not input_ports and not output_ports:
+    else:
+        # ── Step 2b: Port identification for standalone subcircuits ──
+        # When no top-level analog testbench simulation bridges exist, extract ports
+        # directly from the subcircuit's formal port interface.
         all_gate_inputs = set()
         all_gate_outputs = set()
         for inst, model in digital_gates:
@@ -366,30 +381,38 @@ def extract_circuit(parsed_netlist, module_name, needs_escape=False):
             all_gate_inputs.update(gin)
             all_gate_outputs.update(gout)
 
+        # Also collect outputs driven by any inlined DAC bridges inside the subcircuit
+        dac_bridge_outputs = set()
+        for bridge in dac_bridges:
+            if len(bridge.port_groups) >= 2:
+                dac_bridge_outputs.update(bridge.port_groups[1])
+
+        all_outputs = all_gate_outputs | dac_bridge_outputs
+
         # Candidate external nets: from top-level subckt instances, or all gate nets
         candidate_nets = []
         seen_cand = set()
         for si in parsed_netlist.subckt_instances:
             for net in si.nets:
-                if net not in seen_cand and net.lower() not in ("gnd", "0", "vcc"):
+                if net not in seen_cand and net.lower() not in ("gnd", "0", "vcc") and not net.startswith("__nc_"):
                     candidate_nets.append(net)
                     seen_cand.add(net)
 
         if not candidate_nets:
             for net in sorted(all_gate_inputs):
-                if net not in all_gate_outputs and net.lower() not in ("gnd", "0", "vcc"):
+                if net not in all_outputs and net.lower() not in ("gnd", "0", "vcc") and not net.startswith("__nc_"):
                     if net not in seen_cand:
                         candidate_nets.append(net)
                         seen_cand.add(net)
-            for net in sorted(all_gate_outputs):
-                if net not in all_gate_inputs and net.lower() not in ("gnd", "0", "vcc"):
+            for net in sorted(all_outputs):
+                if net not in all_gate_inputs and net.lower() not in ("gnd", "0", "vcc") and not net.startswith("__nc_"):
                     if net not in seen_cand:
                         candidate_nets.append(net)
                         seen_cand.add(net)
 
         for net in candidate_nets:
             legal_name = legalize_name(net)
-            if net in all_gate_outputs:
+            if net in all_outputs:
                 output_ports.append(PortInfo(
                     name=legal_name,
                     direction="output",
@@ -695,6 +718,17 @@ def _resolve_combinational_ports(inst, prim):
         else:
             inputs = []
             outputs = []
+    elif "enable" in pins:
+        # Fixed 3-pin gate: in, enable, out (e.g. d_tristate)
+        flat = []
+        for g in groups:
+            flat.extend(g)
+        if len(flat) >= 3:
+            inputs = [flat[0], flat[1]]
+            outputs = [flat[2]]
+        else:
+            inputs = flat[:-1]
+            outputs = [flat[-1]] if flat else []
     else:
         # Fixed pins: "in", "out" (inverter/buffer)
         flat = []

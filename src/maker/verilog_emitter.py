@@ -125,6 +125,14 @@ def _emit_combinational(gate):
         inp = gate.inputs[0]
         return f"{gate_type} {gate.inst_name} ({output}, {inp});"
 
+    if gate_type == "bufif1":
+        if not gate.outputs or len(gate.inputs) < 2:
+            return None
+        output = gate.outputs[0]
+        inp = gate.inputs[0]
+        enable = gate.inputs[1]
+        return f"{gate_type} {gate.inst_name} ({output}, {inp}, {enable});"
+
     return f"// WARNING: unhandled combinational gate type: {gate_type}"
 
 

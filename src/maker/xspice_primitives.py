@@ -39,9 +39,11 @@ COMBINATIONAL_GATES = {
     "d_or":       {"pins": ["in...", "out"], "verilog": "or"},
     "d_nor":      {"pins": ["in...", "out"], "verilog": "nor"},
     "d_xor":      {"pins": ["in...", "out"], "verilog": "xor"},
+    "d_xnor":     {"pins": ["in...", "out"], "verilog": "xnor"},
     "d_not":      {"pins": ["in", "out"],    "verilog": "not"},
     "d_inverter": {"pins": ["in", "out"],    "verilog": "not"},
     "d_buffer":   {"pins": ["in", "out"],    "verilog": "buf"},
+    "d_tristate": {"pins": ["in", "enable", "out"], "verilog": "bufif1"},
 }
 
 
