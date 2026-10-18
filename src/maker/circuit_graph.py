@@ -52,6 +52,18 @@ class GateInstance:
 
 
 @dataclass
+class GeneratedClockInfo:
+    """Information about a derived/generated clock in sequential circuits."""
+    name: str               # SDC clock identifier (e.g. "gen_clk_q0")
+    target_net: str         # The net carrying the generated clock
+    source_clock: str       # Name of source clock (master clock port or parent)
+    master_port: str        # Top-level master clock port
+    divide_by: int = 2      # Frequency division factor relative to master clock
+    driver_gate: str = None # Driving gate instance name
+    driver_pin: str = "q"   # "q" or "qbar"
+
+
+@dataclass
 class DigitalCircuit:
     """Fully extracted digital circuit, ready for Verilog emission."""
     module_name: str
@@ -62,6 +74,7 @@ class DigitalCircuit:
     clock_net: str = None   # legalized clock port name (if detected)
     clock_period: float = None  # in seconds (from pulse source)
     needs_escape: bool = False  # whether the module name requires a Verilog escape sequence
+    generated_clocks: list = field(default_factory=list)  # list of GeneratedClockInfo
 
 
 # ── Identifier Legalization ────────────────────────────────────────
@@ -503,6 +516,144 @@ def extract_circuit(parsed_netlist, module_name, needs_escape=False):
                                         pass
                                 break
 
+    # ── Step 5b: Infer root clock if not found from pulse source ─
+    input_port_names = {p.name for p in input_ports}
+    # Trace single-input combinational gates (inverters/buffers)
+    net_alias = {}
+    for g in gate_instances:
+        if g.model_type in xp.COMBINATIONAL_GATES and len(g.inputs) == 1 and len(g.outputs) == 1:
+            net_alias[g.outputs[0]] = g.inputs[0]
+
+    def _resolve_to_root(n):
+        visited = set()
+        curr = n
+        while curr not in input_port_names and curr in net_alias and curr not in visited:
+            visited.add(curr)
+            curr = net_alias[curr]
+        return curr
+
+    if has_sequential and not clock_net:
+        clk_candidates = []
+        for g in gate_instances:
+            if g.pin_map and "clk" in g.pin_map:
+                raw_clk = g.pin_map["clk"]
+                root_cand = _resolve_to_root(raw_clk)
+                if root_cand in input_port_names and root_cand not in clk_candidates:
+                    clk_candidates.append(root_cand)
+
+        if clk_candidates:
+            def _clk_score(n):
+                nl = n.lower()
+                if "clk" in nl or "clock" in nl:
+                    return 0
+                if nl in ("in", "cp", "pin_1", "pin1"):
+                    return 1
+                return 2
+
+            clk_candidates.sort(key=_clk_score)
+            clock_net = clk_candidates[0]
+
+    # ── Step 6: Multi-clock & Ripple Counter (Generated Clock) Detection ──
+    generated_clocks = []
+    if has_sequential:
+        seq_gates = [g for g in gate_instances if g.model_type in xp.SEQUENTIAL_ELEMENTS and g.pin_map]
+
+        # Map each sequential output net to (gate, pin_name)
+        gate_output_map = {}
+        for g in seq_gates:
+            for pin in ("q", "qbar"):
+                out_net = g.pin_map.get(pin)
+                if out_net and out_net not in ("1'b0", "1'b1") and not out_net.startswith("__nc_"):
+                    gate_output_map[out_net] = (g, pin)
+
+        # Propagate sequential output mapping through single-input comb gates
+        changed = True
+        while changed:
+            changed = False
+            for g in gate_instances:
+                if g.model_type in xp.COMBINATIONAL_GATES and len(g.inputs) == 1 and len(g.outputs) == 1:
+                    inp, outp = g.inputs[0], g.outputs[0]
+                    if inp in gate_output_map and outp not in gate_output_map:
+                        gate_output_map[outp] = gate_output_map[inp]
+                        changed = True
+
+        # Track clock division factors and master ports per clock domain
+        clock_divides = {}  # net -> int (divide factor relative to master)
+        clock_master = {}   # net -> master_port_name
+
+        # Seed root clock(s)
+        effective_master = clock_net or (input_ports[0].name if input_ports else "clk")
+        if clock_net:
+            clock_divides[clock_net] = 1
+            clock_master[clock_net] = clock_net
+
+        for g in seq_gates:
+            raw_clk = g.pin_map.get("clk")
+            if raw_clk:
+                root_p = _resolve_to_root(raw_clk)
+                if root_p in input_port_names:
+                    clock_divides[root_p] = 1
+                    clock_master[root_p] = root_p
+                    clock_divides[raw_clk] = 1
+                    clock_master[raw_clk] = root_p
+                elif raw_clk not in gate_output_map and root_p not in gate_output_map:
+                    # Clock is not driven by any sequential element: it is a primary root clock
+                    clock_divides[raw_clk] = 1
+                    clock_master[raw_clk] = effective_master
+                    clock_divides[root_p] = 1
+                    clock_master[root_p] = effective_master
+
+        # Iteratively propagate divide factors through sequential stages
+        changed = True
+        while changed:
+            changed = False
+            for g in seq_gates:
+                clk_net_val = g.pin_map.get("clk")
+                if not clk_net_val:
+                    continue
+                resolved_clk = _resolve_to_root(clk_net_val)
+                div = clock_divides.get(clk_net_val) or clock_divides.get(resolved_clk)
+                mport = clock_master.get(clk_net_val) or clock_master.get(resolved_clk) or effective_master
+                if div is not None:
+                    new_div = div * 2
+                    for pin in ("q", "qbar"):
+                        out_net = g.pin_map.get(pin)
+                        if out_net and out_net not in ("1'b0", "1'b1") and not out_net.startswith("__nc_"):
+                            if out_net not in clock_divides or clock_divides[out_net] != new_div:
+                                clock_divides[out_net] = new_div
+                                clock_master[out_net] = mport
+                                changed = True
+                                # Also propagate to outputs of buffers/inverters driving from out_net
+                                for g_c in gate_instances:
+                                    if g_c.model_type in xp.COMBINATIONAL_GATES and len(g_c.inputs) == 1 and len(g_c.outputs) == 1:
+                                        if g_c.inputs[0] == out_net:
+                                            clock_divides[g_c.outputs[0]] = new_div
+                                            clock_master[g_c.outputs[0]] = mport
+
+        # Extract GeneratedClockInfo for all unique generated clock nets
+        seen_clock_nets = set()
+        for g in seq_gates:
+            clk_net_val = g.pin_map.get("clk")
+            if not clk_net_val or clk_net_val in seen_clock_nets:
+                continue
+            resolved_clk = _resolve_to_root(clk_net_val)
+            driver_info = gate_output_map.get(clk_net_val) or gate_output_map.get(resolved_clk)
+            if driver_info:
+                drv_gate, drv_pin = driver_info
+                div = clock_divides.get(clk_net_val) or clock_divides.get(resolved_clk, 2)
+                mport = clock_master.get(clk_net_val) or clock_master.get(resolved_clk) or effective_master
+                gen_name = f"gen_clk_{legalize_name(clk_net_val)}"
+                seen_clock_nets.add(clk_net_val)
+                generated_clocks.append(GeneratedClockInfo(
+                    name=gen_name,
+                    target_net=clk_net_val,
+                    source_clock=mport,
+                    master_port=mport,
+                    divide_by=div,
+                    driver_gate=drv_gate.inst_name,
+                    driver_pin=drv_pin,
+                ))
+
     return DigitalCircuit(
         module_name=module_name,
         ports=input_ports + output_ports,
@@ -512,6 +663,7 @@ def extract_circuit(parsed_netlist, module_name, needs_escape=False):
         clock_net=clock_net,
         clock_period=clock_period,
         needs_escape=needs_escape,
+        generated_clocks=generated_clocks,
     )
 
 

@@ -116,6 +116,11 @@ class NetlistToRTL:
             print(f"  Clock  : {circuit.clock_net}"
                   f" (period={circuit.clock_period})")
 
+        if getattr(circuit, "generated_clocks", None):
+            print(f"  Generated Clocks: {len(circuit.generated_clocks)}")
+            for gc in circuit.generated_clocks:
+                print(f"    - {gc.name}: net={gc.target_net}, /={gc.divide_by} (from {gc.master_port})")
+
         verilog = emit_verilog(circuit)
         sdc = emit_sdc(circuit)
 

@@ -96,6 +96,24 @@ def emit_sdc(circuit):
 
     lines.append("")
 
+    # ── Generated Clocks (Ripple / Derived Clocks) ────────────────
+    gen_clocks = getattr(circuit, "generated_clocks", []) or []
+    if gen_clocks:
+        lines.append("# --------------------------------------------------")
+        lines.append("# Generated / Derived Clocks (Ripple Counter Stages)")
+        lines.append("# --------------------------------------------------")
+        for gc in gen_clocks:
+            lines.append(
+                f"# Derived clock on '{gc.target_net}' (/ {gc.divide_by} from '{gc.master_port}')"
+            )
+            lines.append(
+                f"create_generated_clock -name {gc.name}"
+                f" -source [get_ports {gc.master_port}]"
+                f" -divide_by {gc.divide_by}"
+                f" [get_nets {gc.target_net}]"
+            )
+        lines.append("")
+
     # ── Input/output delays ───────────────────────────────────────
     # Use 20% of clock period as a conservative default delay.
     if circuit.clock_period is not None:
@@ -104,10 +122,15 @@ def emit_sdc(circuit):
         delay = _DEFAULT_PERIOD_NS * 0.2
 
     # Collect non-clock input port names
+    clock_ports = {circuit.clock_net} if circuit.clock_net else set()
+    for gc in gen_clocks:
+        if gc.master_port:
+            clock_ports.add(gc.master_port)
+
     input_ports = []
     output_ports = []
     for port in circuit.ports:
-        if port.name == circuit.clock_net:
+        if port.name in clock_ports:
             continue  # don't constrain clock against itself
         if port.direction == "input":
             input_ports.append(port.name)

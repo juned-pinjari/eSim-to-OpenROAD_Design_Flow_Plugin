@@ -214,6 +214,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Netlist-to-RTL Converter Regression Test Suite")
     parser.add_argument("--sweep", action="store_true", help="Also run the full 55-model 74/54-series digital IC sweep")
+    parser.add_argument("--ripple", action="store_true", help="Run multi-clock and ripple counter SDC constraint tests")
     args, _ = parser.parse_known_args()
 
     total = len(TEST_CASES)
@@ -222,6 +223,20 @@ def main():
           f"Fail: {fail_count}  |  "
           f"Skip: {skip_count}")
     print("=" * 70)
+
+    if args.ripple:
+        print("\n  Running Multi-Clock & Ripple Counter SDC Tests...")
+        import unittest
+        tests_dir = os.path.dirname(__file__)
+        if tests_dir not in sys.path:
+            sys.path.insert(0, tests_dir)
+        import test_ripple_clocks
+        loader = unittest.TestLoader()
+        suite = loader.loadTestsFromModule(test_ripple_clocks)
+        runner = unittest.TextTestRunner(verbosity=2)
+        res = runner.run(suite)
+        if not res.wasSuccessful():
+            fail_count += 1
 
     if args.sweep:
         print("\n")
@@ -233,9 +248,10 @@ def main():
         except Exception as e:
             print(f"Error running 74-series sweep: {e}")
             fail_count += 1
-    else:
+    elif not args.ripple:
         print("\n  TTL Library Coverage: 55/55 digital 74/54 IC models verified.")
-        print("  Run 'python3 tests/test_converter.py --sweep' to test all 55 models.\n")
+        print("  Run 'python3 tests/test_converter.py --sweep' to test all 55 models.")
+        print("  Run 'python3 tests/test_converter.py --ripple' for multi-clock SDC tests.\n")
 
     return 0 if fail_count == 0 else 1
 

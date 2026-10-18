@@ -508,6 +508,33 @@ def parse_file(filepath, search_paths=None):
     )
 
 
+def parse_string(text, search_paths=None):
+    """Parse SPICE netlist text into a ParsedNetlist."""
+    lines = text.splitlines(keepends=True)
+    (instances, models, voltage_sources, subckt_instances,
+     includes, comments, subcircuits, title) = parse_lines(lines)
+
+    if search_paths is None:
+        repo_root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..")
+        )
+        search_paths = [os.path.join(repo_root, "library", "SubcircuitLibrary")]
+
+    _resolve_subckt_includes(subcircuits, search_paths)
+
+    return ParsedNetlist(
+        title=title,
+        includes=includes,
+        instances=instances,
+        models=models,
+        voltage_sources=voltage_sources,
+        subckt_instances=subckt_instances,
+        subcircuits=subcircuits,
+        comments=comments,
+    )
+
+
+
 def _resolve_subckt_includes(subcircuits, search_paths):
     """Resolve .include directives inside subcircuit definitions.
 
