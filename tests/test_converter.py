@@ -216,6 +216,7 @@ def main():
     parser.add_argument("--sweep", action="store_true", help="Also run the full 55-model 74/54-series digital IC sweep")
     parser.add_argument("--ripple", action="store_true", help="Run multi-clock and ripple counter SDC constraint tests")
     parser.add_argument("--pdk", action="store_true", help="Run multi-PDK cross-validation tests (Sky130hd vs GF180)")
+    parser.add_argument("--tb", action="store_true", help="Run automated testbench simulation tests (iverilog + vvp)")
     args, _ = parser.parse_known_args()
 
     total = len(TEST_CASES)
@@ -249,6 +250,20 @@ def main():
         if pdk_rc != 0:
             fail_count += 1
 
+    if args.tb:
+        print("\n  Running Automated Testbench Simulation Tests...")
+        import unittest
+        tests_dir = os.path.dirname(__file__)
+        if tests_dir not in sys.path:
+            sys.path.insert(0, tests_dir)
+        import test_tb_generator
+        loader = unittest.TestLoader()
+        suite = loader.loadTestsFromModule(test_tb_generator)
+        runner = unittest.TextTestRunner(verbosity=2)
+        res = runner.run(suite)
+        if not res.wasSuccessful():
+            fail_count += 1
+
     if args.sweep:
         print("\n")
         try:
@@ -259,11 +274,12 @@ def main():
         except Exception as e:
             print(f"Error running 74-series sweep: {e}")
             fail_count += 1
-    elif not args.ripple and not args.pdk:
+    elif not args.ripple and not args.pdk and not args.tb:
         print("\n  TTL Library Coverage: 55/55 digital 74/54 IC models verified.")
         print("  Run 'python3 tests/test_converter.py --sweep' to test all 55 models.")
         print("  Run 'python3 tests/test_converter.py --ripple' for multi-clock SDC tests.")
-        print("  Run 'python3 tests/test_converter.py --pdk' for multi-PDK cross-validation.\n")
+        print("  Run 'python3 tests/test_converter.py --pdk' for multi-PDK cross-validation.")
+        print("  Run 'python3 tests/test_converter.py --tb' for automated testbench simulation.\n")
 
     return 0 if fail_count == 0 else 1
 

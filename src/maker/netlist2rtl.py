@@ -79,12 +79,14 @@ class NetlistToRTL:
             from .circuit_graph import extract_circuit
             from .verilog_emitter import emit_verilog
             from .sdc_emitter import emit_sdc
+            from .tb_generator import emit_testbench
         except ImportError:
             # Fallback when executed directly as a script by the eSim GUI
             from spice_parser import parse_file
             from circuit_graph import extract_circuit
             from verilog_emitter import emit_verilog
             from sdc_emitter import emit_sdc
+            from tb_generator import emit_testbench
 
         if not os.path.exists(self.cir_out_file):
             raise FileNotFoundError(
@@ -123,6 +125,7 @@ class NetlistToRTL:
 
         verilog = emit_verilog(circuit)
         sdc = emit_sdc(circuit)
+        tb = emit_testbench(circuit, parsed)
 
         # Write output alongside the input file
         project_dir = os.path.dirname(self.cir_out_file)
@@ -137,12 +140,22 @@ class NetlistToRTL:
             self.project_name + ".sdc"
         )
 
+        tb_file = os.path.join(
+            project_dir,
+            self.project_name + "_tb.v"
+        )
+
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(verilog)
 
         with open(sdc_file, "w", encoding="utf-8") as f:
             f.write(sdc)
 
+        with open(tb_file, "w", encoding="utf-8") as f:
+            f.write(tb)
+
+        self.tb_file = tb_file
+        self.sdc_file = sdc_file
         return output_file
 
 

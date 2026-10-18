@@ -654,8 +654,9 @@ def extract_circuit(parsed_netlist, module_name, needs_escape=False):
                     driver_pin=drv_pin,
                 ))
 
+    legalized_mod_name = legalize_name(module_name)
     return DigitalCircuit(
-        module_name=module_name,
+        module_name=legalized_mod_name,
         ports=input_ports + output_ports,
         wires=sorted(internal_wires),
         gates=gate_instances,
