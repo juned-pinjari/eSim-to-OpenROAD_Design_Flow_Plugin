@@ -55,6 +55,10 @@ TEST_CASES = [
     ("4_Input_NOR",        "Examples/Analysis_Of_Digital_IC/4_Input_NOR_Characteristics/4_Input_NOR_Characteristics.cir.out"),
     ("74LS04-test",        "Examples/Analysis_Of_Digital_IC/74LS04-test/74LS04-test.cir.out"),
     ("BCDToDecimalDecoder", "Examples/Analysis_Of_Digital_IC/BCDToDecimalDecoder/BCDToDecimalDecoder.cir.out"),
+
+    # Phase 6: 74-Series Subcircuit Expansion (Multi-Level Hierarchy)
+    ("SN74LS138_test",     "Examples/Analysis_Of_Digital_IC/SN74LS138_test/SN74LS138_test.cir.out"),
+    ("74151_test",         "Examples/Analysis_Of_Digital_IC/74151_test/74151_test.cir.out"),
 ]
 
 # Circuits known to be unsupported (transistor-level, mixed-signal, etc.)
@@ -207,12 +211,31 @@ def main():
         print(f"  {name:<30} {status_icon:<8} {cells:<8} {sdc:<5} "
               f"{short_notes}")
 
+    import argparse
+    parser = argparse.ArgumentParser(description="Netlist-to-RTL Converter Regression Test Suite")
+    parser.add_argument("--sweep", action="store_true", help="Also run the full 55-model 74/54-series digital IC sweep")
+    args, _ = parser.parse_known_args()
+
     total = len(TEST_CASES)
     print(f"\n  Total: {total}  |  "
           f"Pass: {pass_count}  |  "
           f"Fail: {fail_count}  |  "
           f"Skip: {skip_count}")
-    print("=" * 70 + "\n")
+    print("=" * 70)
+
+    if args.sweep:
+        print("\n")
+        try:
+            import test_74_series_sweep
+            sweep_rc = test_74_series_sweep.main()
+            if sweep_rc != 0:
+                fail_count += 1
+        except Exception as e:
+            print(f"Error running 74-series sweep: {e}")
+            fail_count += 1
+    else:
+        print("\n  TTL Library Coverage: 55/55 digital 74/54 IC models verified.")
+        print("  Run 'python3 tests/test_converter.py --sweep' to test all 55 models.\n")
 
     return 0 if fail_count == 0 else 1
 

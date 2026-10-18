@@ -211,8 +211,8 @@ export DESIGN_NAME = {self.top_module}
 export PLATFORM = {self.platform}
 export VERILOG_FILES = designs/{self.platform}/{self.top_module}/src/{verilog_name}
 export SDC_FILE = designs/{self.platform}/{self.top_module}/constraint.sdc
-export DIE_AREA = 0 0 200 200
-export CORE_AREA = 20 20 180 180
+export DIE_AREA = 0 0 100 100
+export CORE_AREA = 10 10 90 90
 export PLACE_DENSITY = 0.40
 """
 

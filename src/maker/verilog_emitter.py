@@ -61,17 +61,20 @@ def emit_verilog(circuit):
     lines.append(");")
     lines.append("")
 
-    # ── Wire declarations ─────────────────────────────────────────
-    if circuit.wires:
-        for wire in circuit.wires:
-            lines.append(f"wire {wire};")
-        lines.append("")
-
     # ── Reg declarations for internal sequential nets ─────────────
     # Only needed for sequential outputs that are NOT module ports
     # (e.g. internal flip-flop outputs feeding other gates).
     port_names = {p.name for p in circuit.ports}
     internal_regs = seq_regs - port_names
+
+    # ── Wire declarations ─────────────────────────────────────────
+    # Exclude internal nets that will be declared as 'reg'
+    wires_to_declare = [w for w in circuit.wires if w not in internal_regs]
+    if wires_to_declare:
+        for wire in wires_to_declare:
+            lines.append(f"wire {wire};")
+        lines.append("")
+
     if internal_regs:
         for reg_name in sorted(internal_regs):
             lines.append(f"reg {reg_name};")

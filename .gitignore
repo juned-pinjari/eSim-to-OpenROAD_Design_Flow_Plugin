@@ -4,6 +4,9 @@ orfs/*.log
 orfs/*.json
 orfs/__pycache__/
 
+# === Test scratch outputs ===
+scratch/
+
 # === Python ===
 **/__pycache__/
 *.pyc
@@ -22,3 +25,14 @@ nghdl/
 # === eSim simulation outputs ===
 plot_data_v.txt
 plot_data_i.txt
+
+# === OpenROAD flow outputs ===
+Examples/**/logs/
+Examples/**/reports/
+*.gds
+*.def
+*.spef
+
+# === Converter generated outputs ===
+Examples/**/*.v
+Examples/**/*.sdc

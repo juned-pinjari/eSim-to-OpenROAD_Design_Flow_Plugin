@@ -152,7 +152,20 @@ def _tokenize_a_line(tokens):
             else:
                 groups.append([tok])
 
-    return inst_name, groups, model_name
+    # Disambiguate unconnected terminals '?' so each gets a distinct net
+    nc_count = 0
+    resolved_groups = []
+    for grp in groups:
+        resolved_grp = []
+        for net in grp:
+            if net == "?":
+                nc_count += 1
+                resolved_grp.append(f"__nc_{inst_name}_{nc_count}")
+            else:
+                resolved_grp.append(net)
+        resolved_groups.append(resolved_grp)
+
+    return inst_name, resolved_groups, model_name
 
 
 def _parse_model_params(param_str):
@@ -401,14 +414,64 @@ def _parse_subckt_block(name, ports, lines):
 
 # ── Public API ─────────────────────────────────────────────────────
 
-def parse_file(filepath):
+def _find_include_file(inc_file, search_paths):
+    """Locate an include file across a sequence of search paths.
+
+    Checks:
+      1. Direct path or normalized path relative to each search path
+      2. Filename directly under each search path
+      3. Filename under a subfolder named after the subcircuit base
+         (e.g., ``library/SubcircuitLibrary/4_and/4_and.sub``)
+    """
+    clean_inc = inc_file.replace("\\", "/")
+    inc_name = os.path.basename(clean_inc)
+    inc_base = os.path.splitext(inc_name)[0]
+
+    for sp in search_paths:
+        if not sp or not os.path.isdir(sp):
+            continue
+        # 1. Direct path
+        cand = os.path.join(sp, clean_inc)
+        if os.path.isfile(cand):
+            return os.path.abspath(cand)
+        # 2. Filename directly in search path
+        cand = os.path.join(sp, inc_name)
+        if os.path.isfile(cand):
+            return os.path.abspath(cand)
+        # 3. Subfolder matching base name
+        cand = os.path.join(sp, inc_base, inc_name)
+        if os.path.isfile(cand):
+            return os.path.abspath(cand)
+
+    return None
+
+
+def parse_file(filepath, search_paths=None):
     """Parse a ``.cir.out`` or ``.sub`` file into a ``ParsedNetlist``.
 
-    Resolves ``.include`` directives relative to the file's directory,
-    and recursively parses referenced ``.sub`` files.
+    Resolves ``.include`` directives relative to the file's directory
+    and configured library search paths, and recursively parses referenced
+    ``.sub`` files.
     """
     filepath = os.path.abspath(filepath)
     base_dir = os.path.dirname(filepath)
+
+    if search_paths is None:
+        search_paths = []
+    else:
+        search_paths = list(search_paths)
+
+    # Ensure base_dir is first in search_paths
+    if base_dir not in search_paths:
+        search_paths.insert(0, base_dir)
+
+    # Add standard eSim library paths from repository root
+    repo_root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..")
+    )
+    subckt_lib = os.path.join(repo_root, "library", "SubcircuitLibrary")
+    if os.path.isdir(subckt_lib) and subckt_lib not in search_paths:
+        search_paths.append(subckt_lib)
 
     with open(filepath, "r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -416,19 +479,22 @@ def parse_file(filepath):
     (instances, models, voltage_sources, subckt_instances,
      includes, comments, subcircuits, title) = parse_lines(lines)
 
-    # Resolve includes: parse .sub files
+    # Resolve top-level includes: parse .sub files
     for inc_file in includes:
-        inc_path = os.path.join(base_dir, inc_file)
-        if os.path.exists(inc_path):
-            sub_netlist = parse_file(inc_path)
+        inc_path = _find_include_file(inc_file, search_paths)
+        if inc_path:
+            inc_dir = os.path.dirname(inc_path)
+            child_paths = [inc_dir] + [p for p in search_paths if p != inc_dir]
+            sub_netlist = parse_file(inc_path, search_paths=child_paths)
             # Merge subcircuits from included files
             subcircuits.update(sub_netlist.subcircuits)
+        else:
+            print(f"Warning: Could not resolve include file '{inc_file}' in search paths: {search_paths}")
 
     # Also resolve includes inside subcircuit definitions.
     # Example: full_adder.sub has ".include half_adder.sub" inside
-    # the .subckt block — those subcircuits need to be available
-    # at the top level for flattening.
-    _resolve_subckt_includes(subcircuits, base_dir)
+    # the .subckt block, or 74151.sub has ".include 4_and.sub".
+    _resolve_subckt_includes(subcircuits, search_paths)
 
     return ParsedNetlist(
         title=title,
@@ -442,21 +508,31 @@ def parse_file(filepath):
     )
 
 
-def _resolve_subckt_includes(subcircuits, base_dir):
+def _resolve_subckt_includes(subcircuits, search_paths):
     """Resolve .include directives inside subcircuit definitions.
 
-    When a subcircuit has includes (e.g. full_adder includes half_adder),
-    parse those files and merge the resulting subcircuits into the
-    top-level subcircuits dict.
+    Uses a worklist queue to transitively resolve nested subcircuit includes
+    at any arbitrary depth (e.g. 74151 -> 4_and -> 3_and).
     """
-    # Iterate over a copy since we may modify subcircuits
-    for name in list(subcircuits.keys()):
-        subckt = subcircuits[name]
-        for inc_file in subckt.includes:
-            inc_path = os.path.join(base_dir, inc_file)
-            if os.path.exists(inc_path):
-                sub_netlist = parse_file(inc_path)
-                # Merge any newly discovered subcircuits
-                for sc_name, sc_def in sub_netlist.subcircuits.items():
-                    if sc_name not in subcircuits:
-                        subcircuits[sc_name] = sc_def
+    processed = set()
+    while True:
+        current_names = [n for n in subcircuits.keys() if n not in processed]
+        if not current_names:
+            break
+
+        for name in current_names:
+            processed.add(name)
+            subckt = subcircuits[name]
+            for inc_file in subckt.includes:
+                inc_path = _find_include_file(inc_file, search_paths)
+                if inc_path:
+                    inc_dir = os.path.dirname(inc_path)
+                    child_paths = [inc_dir] + [p for p in search_paths if p != inc_dir]
+                    sub_netlist = parse_file(inc_path, search_paths=child_paths)
+                    # Merge any newly discovered subcircuits
+                    for sc_name, sc_def in sub_netlist.subcircuits.items():
+                        if sc_name not in subcircuits:
+                            subcircuits[sc_name] = sc_def
+                else:
+                    print(f"Warning: Subcircuit '{name}' could not resolve include '{inc_file}'")
+

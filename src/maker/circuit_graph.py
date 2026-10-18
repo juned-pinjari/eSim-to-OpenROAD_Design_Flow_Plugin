@@ -334,6 +334,65 @@ def extract_circuit(parsed_netlist, module_name, needs_escape=False):
                 ))
                 output_digital_nets.add(digital)
 
+    # ── Step 2b: Fallback port identification for standalone subcircuits ──
+    # When no ADC/DAC simulation bridges exist (e.g., direct subcircuit-to-RTL
+    # conversion or subcircuit testbench without analog wrappers), extract ports
+    # directly by analyzing which external nets are driven by gate outputs.
+    if not input_ports and not output_ports:
+        all_gate_inputs = set()
+        all_gate_outputs = set()
+        for inst, model in digital_gates:
+            mtype = model.model_type
+            prim = xp.get_primitive(mtype)
+            if prim is None:
+                continue
+            if xp.is_combinational(mtype):
+                gin, gout = _resolve_combinational_ports(inst, prim)
+            else:
+                gin, gout = _resolve_sequential_ports(inst, prim)
+            all_gate_inputs.update(gin)
+            all_gate_outputs.update(gout)
+
+        # Candidate external nets: from top-level subckt instances, or all gate nets
+        candidate_nets = []
+        seen_cand = set()
+        for si in parsed_netlist.subckt_instances:
+            for net in si.nets:
+                if net not in seen_cand and net.lower() not in ("gnd", "0", "vcc"):
+                    candidate_nets.append(net)
+                    seen_cand.add(net)
+
+        if not candidate_nets:
+            for net in sorted(all_gate_inputs):
+                if net not in all_gate_outputs and net.lower() not in ("gnd", "0", "vcc"):
+                    if net not in seen_cand:
+                        candidate_nets.append(net)
+                        seen_cand.add(net)
+            for net in sorted(all_gate_outputs):
+                if net not in all_gate_inputs and net.lower() not in ("gnd", "0", "vcc"):
+                    if net not in seen_cand:
+                        candidate_nets.append(net)
+                        seen_cand.add(net)
+
+        for net in candidate_nets:
+            legal_name = legalize_name(net)
+            if net in all_gate_outputs:
+                output_ports.append(PortInfo(
+                    name=legal_name,
+                    direction="output",
+                    spice_analog_net=net,
+                    spice_digital_net=net,
+                ))
+                output_digital_nets.add(net)
+            else:
+                input_ports.append(PortInfo(
+                    name=legal_name,
+                    direction="input",
+                    spice_analog_net=net,
+                    spice_digital_net=net,
+                ))
+                input_digital_nets.add(net)
+
     # Build net-name mapping: digital_net → port_name
     # For nets that cross a bridge, use the analog-side name (human-readable)
     net_to_port = {}
