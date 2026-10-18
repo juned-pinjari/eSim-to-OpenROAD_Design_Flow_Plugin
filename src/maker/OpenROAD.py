@@ -206,14 +206,31 @@ set_output_delay 0.1 [all_outputs]
             self.verilog_file
         )
 
+        # Platform-specific floorplan profiles:
+        # - sky130hd: 100x100 um die (80x80 um core) ensures healthy density (>5%) while clearing straps (>35 um)
+        # - gf180:    200x200 um die (160x160 um core) required for gf180 Metal5 PDN grid (pitch 89.6 um)
+        # - asap7:    50x50 um die (40x40 um core) for 7nm predictive tech
+        # - nangate45:80x80 um die (60x60 um core) for 45nm open-cell library
+        floorplan_profiles = {
+            "sky130hd":   ("0 0 100 100", "10 10 90 90", "0.40"),
+            "sky130hs":   ("0 0 100 100", "10 10 90 90", "0.40"),
+            "gf180":      ("0 0 200 200", "20 20 180 180", "0.40"),
+            "asap7":      ("0 0 50 50",   "5 5 45 45",     "0.40"),
+            "nangate45":  ("0 0 80 80",   "10 10 70 70",   "0.40"),
+            "ihp-sg13g2": ("0 0 150 150", "15 15 135 135", "0.40"),
+        }
+        die_area, core_area, density = floorplan_profiles.get(
+            self.platform, ("0 0 100 100", "10 10 90 90", "0.40")
+        )
+
         config = f"""
 export DESIGN_NAME = {self.top_module}
 export PLATFORM = {self.platform}
 export VERILOG_FILES = designs/{self.platform}/{self.top_module}/src/{verilog_name}
 export SDC_FILE = designs/{self.platform}/{self.top_module}/constraint.sdc
-export DIE_AREA = 0 0 100 100
-export CORE_AREA = 10 10 90 90
-export PLACE_DENSITY = 0.40
+export DIE_AREA = {die_area}
+export CORE_AREA = {core_area}
+export PLACE_DENSITY = {density}
 """
 
         with open(config_file, "w", encoding="utf-8") as f:
